@@ -1,0 +1,314 @@
+# Injecting Secrets into Kubernetes Pods via Vault Helm Sidecar
+
+$ cat deployment-orgchart.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orgchart
+  labels:
+    app: orgchart
+spec:
+  selector:
+    matchLabels:
+      app: orgchart
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+      labels:
+        app: orgchart
+    spec:
+      serviceAccountName: internal-app
+      containers:
+        - name: orgchart
+          image: jweissig/app:0.0.1
+$ kubectl apply --filename deployment-orgchart.yml
+deployment.apps/orgchart created
+$ kubectl get pods
+NAME                                   READY   STATUS              RESTARTS   AGE
+orgchart-666df5cf59-gc4fr              0/1     ContainerCreating   0          3s
+vault-0                                1/1     Running             0          7m10s
+vault-agent-injector-bdbf7b844-pkkzk   1/1     Running             0          7m10s
+$ kubectl exec $(kubectl get pod -l app=orgchart -o jsonpath="{.items[0].metadata.name}") --container orgchart -- ls /vault/secrets
+ls: /vault/secrets: No such file or directory
+command terminated with exit code 1
+
+
+
+$ kubectl patch deployment orgchart --patch "$(cat patch-inject-secrets.yml)"
+deployment.apps/orgchart patched
+$ cat patch-inject-secrets.yml
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "internal-app"
+        vault.hashicorp.com/agent-inject-secret-database-config.txt: "internal/data/database/config"
+$ kubectl get pods
+NAME                                   READY   STATUS    RESTARTS   AGE
+orgchart-7447d696df-fl429              2/2     Running   0          19s
+vault-0                                1/1     Running   0          9m1s
+vault-agent-injector-bdbf7b844-pkkzk   1/1     Running   0          9m1s
+$ kubectl logs $(kubectl get pod -l app=orgchart -o jsonpath="{.items[0].metadata.name}") --container vault-agent
+==> Vault agent started! Log data will stream in below:
+
+==> Vault agent configuration:
+
+                     Cgo: disabled
+               Log Level: info
+                 Version: Vault v1.5.2
+             Version Sha: 685fdfa60d607bca069c09d2d52b6958a7a2febd
+
+2020-10-12T18:03:33.436Z [INFO]  sink.file: creating file sink
+2020-10-12T18:03:33.436Z [INFO]  sink.file: file sink configured: path=/home/vault/.vault-token mode=-rw-r-----
+2020-10-12T18:03:33.437Z [INFO]  template.server: starting template server
+2020/10/12 18:03:33.437049 [INFO] (runner) creating new runner (dry: false, once: false)
+2020-10-12T18:03:33.437Z [INFO]  auth.handler: starting auth handler
+2020-10-12T18:03:33.437Z [INFO]  auth.handler: authenticating
+2020/10/12 18:03:33.437469 [INFO] (runner) creating watcher
+2020-10-12T18:03:33.437Z [INFO]  sink.server: starting sink server
+2020-10-12T18:03:33.445Z [INFO]  auth.handler: authentication successful, sending token to sinks
+2020-10-12T18:03:33.445Z [INFO]  auth.handler: starting renewal process
+2020-10-12T18:03:33.445Z [INFO]  sink.file: token written: path=/home/vault/.vault-token
+2020-10-12T18:03:33.445Z [INFO]  template.server: template server received new token
+2020/10/12 18:03:33.445350 [INFO] (runner) stopping
+2020/10/12 18:03:33.445367 [INFO] (runner) creating new runner (dry: false, once: false)
+2020/10/12 18:03:33.445494 [INFO] (runner) creating watcher
+2020/10/12 18:03:33.445522 [INFO] (runner) starting
+2020-10-12T18:03:33.471Z [INFO]  auth.handler: renewed auth token
+$ kubectl exec $(kubectl get pod -l app=orgchart -o jsonpath="{.items[0].metadata.name}") --container orgchart -- cat /vault/secrets/database-config.txt
+data: map[password:db-secret-password username:db-readonly-username]
+metadata: map[created_time:2020-10-12T17:56:49.280417989Z deletion_time: destroyed:false version:1]
+
+
+
+
+
+
+
+
+
+
+
+$ cat patch-inject-secrets-as-template.yml
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-status: "update"
+        vault.hashicorp.com/role: "internal-app"
+        vault.hashicorp.com/agent-inject-secret-database-config.txt: "internal/data/database/config"
+        vault.hashicorp.com/agent-inject-template-database-config.txt: |
+          {{- with secret "internal/data/database/config" -}}          postgresql://{{ .Data.data.username }}:{{ .Data.data.password }}@postgres:5432/wizard
+          {{- end -}}$
+$ kubectl patch deployment orgchart --patch "$(cat patch-inject-secrets-as-template.yml)"
+deployment.apps/orgchart patched
+$ kubectl get pods
+NAME                                   READY   STATUS    RESTARTS   AGE
+orgchart-547dd9ccc5-wbxjz              2/2     Running   0          45s
+vault-0                                1/1     Running   0          12m
+vault-agent-injector-bdbf7b844-pkkzk   1/1     Running   0          12m
+$ kubectl exec -it $(kubectl get pod -l app=orgchart -o jsonpath="{.items[0].metadata.name}") -c orgchart -- cat /vault/secrets/database-config.txt
+postgresql://db-readonly-username:db-secret-password@postgres:5432/wizard$
+
+
+
+
+# deployment with annotations
+$ cat pod-payroll.yml
+apiVersion: v1
+kind: Pod
+metadata:  name: payroll
+  labels:
+    app: payroll
+  annotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "internal-app"
+    vault.hashicorp.com/agent-inject-secret-database-config.txt: "internal/data/database/config"
+    vault.hashicorp.com/agent-inject-template-database-config.txt: |
+      {{- with secret "internal/data/database/config" -}}
+      postgresql://{{ .Data.data.username }}:{{ .Data.data.password }}@postgres:5432/wizard
+      {{- end -}}
+spec:
+  serviceAccountName: internal-app
+  containers:
+    - name: payroll
+      image: jweissig/app:0.0.1
+$ kubectl apply --filename pod-payroll.yml
+pod/payroll created
+$ kubectl get pods
+NAME                                   READY   STATUS     RESTARTS   AGE
+orgchart-547dd9ccc5-wbxjz              2/2     Running    0          97s
+payroll                                0/2     Init:0/1   0          2s
+vault-0                                1/1     Running    0          13m
+vault-agent-injector-bdbf7b844-pkkzk   1/1     Running    0          13m
+$ kubectl exec payroll --container payroll -- cat /vault/secrets/database-config.txt
+postgresql://db-readonly-username:db-secret-password@postgres:5432/wizard$
+
+
+=======================================================
+$ kubectl create namespace offsite
+namespace/offsite created
+$ kubectl config set-context --current --namespace offsite
+Context "minikube" modified.
+$ cat service-account-internal-app.yml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: internal-app
+$ kubectl apply --filename service-account-internal-app.yml
+serviceaccount/internal-app created
+$ cat deployment-issues.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: issues
+  labels:
+    app: issues
+spec:
+  selector:
+    matchLabels:
+      app: issues
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "internal-app"
+        vault.hashicorp.com/agent-inject-secret-database-config.txt: "internal/data/database/config"
+        vault.hashicorp.com/agent-inject-template-database-config.txt: |
+          {{- with secret "internal/data/database/config" -}}
+          postgresql://{{ .Data.data.username }}:{{ .Data.data.password }}@postgres:5432/wizard
+          {{- end -}}
+      labels:
+        app: issues
+    spec:
+      serviceAccountName: internal-app
+      containers:
+        - name: issues
+          image: jweissig/app:0.0.1
+$ kubectl apply --filename deployment-issues.yml
+deployment.apps/issues created
+$ kubectl get pods
+NAME                     READY   STATUS     RESTARTS   AGE
+issues-f74698647-dgh5j   0/2     Init:0/1   0          3s
+$ kubectl logs $(kubectl get pod -l app=issues -o jsonpath="{.items[0].metadata.name}") --container vault-agent-init
+==> Vault agent started! Log data will stream in below:
+
+==> Vault agent configuration:
+
+                     Cgo: disabled
+               Log Level: info
+                 Version: Vault v1.5.2
+             Version Sha: 685fdfa60d607bca069c09d2d52b6958a7a2febd
+
+2020-10-12T18:12:00.578Z [INFO]  sink.file: creating file sink
+2020-10-12T18:12:00.578Z [INFO]  sink.file: file sink configured: path=/home/vault/.vault-token mode=-rw-r-----
+2020-10-12T18:12:00.579Z [INFO]  auth.handler: starting auth handler
+2020-10-12T18:12:00.579Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:00.579Z [INFO]  template.server: starting template server
+2020/10/12 18:12:00.579338 [INFO] (runner) creating new runner (dry: false, once: false)
+2020/10/12 18:12:00.579718 [INFO] (runner) creating watcher
+2020-10-12T18:12:00.579Z [INFO]  sink.server: starting sink server
+2020-10-12T18:12:00.581Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=2.98075921
+2020-10-12T18:12:03.562Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:03.564Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.478921562
+2020-10-12T18:12:05.043Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:05.046Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.149136743
+2020-10-12T18:12:06.195Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:06.201Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.5674102859999999
+2020-10-12T18:12:07.768Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:07.772Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.233576139
+2020-10-12T18:12:09.005Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:09.008Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.598330204
+2020-10-12T18:12:10.606Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:10.608Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=2.113295578
+2020-10-12T18:12:12.722Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:12.724Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.7081598310000001
+2020-10-12T18:12:14.433Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:14.435Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.6859317969999998
+2020-10-12T18:12:16.121Z [INFO]  auth.handler: authenticating
+2020-10-12T18:12:16.123Z [ERROR] auth.handler: error authenticating: error="Error making API request.
+
+URL: PUT http://vault.default.svc:8200/v1/auth/kubernetes/login
+Code: 500. Errors:
+
+* namespace not authorized" backoff=1.172724234
+$ kubectl exec --namespace default -it vault-0 -- /bin/sh
+/ $ vault write auth/kubernetes/role/offsite-app \
+>     bound_service_account_names=internal-app \
+>     bound_service_account_namespaces=offsite \
+>     policies=internal-app \
+>     ttl=24h
+Success! Data written to: auth/kubernetes/role/offsite-app
+/ $ exit
+$ cat patch-issues.yml
+spec:
+  template:
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-status: "update"
+        vault.hashicorp.com/role: "offsite-app"
+        vault.hashicorp.com/agent-inject-secret-database-config.txt: "internal/data/database/config"
+        vault.hashicorp.com/agent-inject-template-database-config.txt: |
+          {{- with secret "internal/data/database/config" -}}
+          postgresql://{{ .Data.data.username }}:{{ .Data.data.password }}@postgres:5432/wizard
+          {{- end -}}
+$ kubectl patch deployment issues --patch "$(cat patch-issues.yml)"
+deployment.apps/issues patched
+$ kubectl get pods
+NAME                     READY   STATUS        RESTARTS   AGE
+issues-d74d54974-f64pj   2/2     Running       0          4s
+issues-f74698647-dgh5j   0/2     Terminating   0          117s
+$ kubectl exec \
+>     $(kubectl get pod -l app=issues -o jsonpath="{.items[0].metadata.name}") \
+>     --container issues -- cat /vault/secrets/database-config.txt
+postgresql://db-readonly-username:db-secret-password@postgres:5432/wizard$
