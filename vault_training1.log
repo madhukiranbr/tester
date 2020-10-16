@@ -1,0 +1,164 @@
+$ minikube version
+minikube version: v1.12.0
+commit: c83e6c47124b71190e138dbc687d2556d31488d6
+$ minikube start --vm-driver none --bootstrapper kubeadm
+* minikube v1.12.0 on Ubuntu 18.04
+! Both driver=none and vm-driver=none have been set.
+
+    Since vm-driver is deprecated, minikube will default to driver=none.
+
+    If vm-driver is set in the global config, please run "minikube config unset vm-driver" to resolve this warning.
+
+* Using the none driver based on user configuration
+* Kubernetes 1.18.3 is now available. If you would like to upgrade, specify: --kubernetes-version=v1.18.3
+* Starting control plane node minikube in cluster minikube
+* Running on localhost (CPUs=2, Memory=2460MB, Disk=145651MB) ...
+* OS release is Ubuntu 18.04.4 LTS
+* Preparing Kubernetes v1.17.3 on Docker 19.03.6 ...
+  - kubelet.resolv-conf=/run/systemd/resolve/resolv.conf
+* Configuring local host environment ...
+* Verifying Kubernetes components...
+* Enabled addons: default-storageclass, storage-provisioner
+* Done! kubectl is now configured to use "minikube"
+$ minikube status
+minikube
+type: Control Plane
+host: Running
+kubelet: Running
+apiserver: Running
+kubeconfig: Configured
+
+
+
+$ helm repo add hashicorp https://helm.releases.hashicorp.com
+"hashicorp" has been added to your repositories
+$ helm install vault hashicorp/vault --set "server.dev.enabled=true"
+NAME: vault
+LAST DEPLOYED: Mon Oct 12 17:54:47 2020
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+Thank you for installing HashiCorp Vault!
+
+Now that you have deployed Vault, you should look over the docs on using
+Vault with Kubernetes available here:
+
+https://www.vaultproject.io/docs/
+
+
+Your release is named vault. To learn more about the release, try:
+
+  $ helm status vault
+  $ helm get vault
+$ kubectl get pods
+NAME                                   READY   STATUS              RESTARTS   AGE
+vault-0                                0/1     ContainerCreating   0          2s
+vault-agent-injector-bdbf7b844-pkkzk   0/1     ContainerCreating   0          2s
+
+
+
+
+
+
+$ kubectl exec -it vault-0 -- /bin/sh
+/ $ vault secrets enable -path=internal kv-v2
+Success! Enabled the kv-v2 secrets engine at: internal/
+/ $ vault kv put internal/database/config username="db-readonly-username" password="db-secret-password"
+Key              Value
+---              -----
+created_time     2020-10-12T17:56:49.280417989Z
+deletion_time    n/a
+destroyed        false
+version          1
+/ $ vaultkv get internal/databse/config
+/bin/sh: vaultkv: not found
+/ $ vault kv get internal/databse/config
+No value found at internal/data/databse/config
+/ $ vault kv get internal/database/config
+====== Metadata ======
+Key              Value
+---              -----
+created_time     2020-10-12T17:56:49.280417989Z
+deletion_time    n/a
+destroyed        false
+version          1
+
+====== Data ======
+Key         Value
+---         -----
+password    db-secret-password
+username    db-readonly-username
+
+
+
+
+$ kubectl exec -it vault-0 -- /bin/sh
+/ $ vault secrets enable -path=internal kv-v2
+Success! Enabled the kv-v2 secrets engine at: internal/
+/ $ vault kv put internal/database/config username="db-readonly-username" password="db-secret-password"
+Key              Value
+---              -----
+created_time     2020-10-12T17:56:49.280417989Z
+deletion_time    n/a
+destroyed        false
+version          1
+/ $ vaultkv get internal/databse/config
+/bin/sh: vaultkv: not found
+/ $ vault kv get internal/databse/config
+/ $ exit
+$ kubectl exec -it vault-0 -- /bin/sh
+/ $ vault auth enable kubernetes
+Success! Enabled kubernetes auth method at: kubernetes/
+/ $ vault write auth/kubernetes/config \
+>         token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+>         kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443" \
+>         kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+Success! Data written to: auth/kubernetes/config
+/ $ vault policy write internal-app - <<EOF
+> path "internal/data/database/config" {
+>   capabilities = ["read"]
+> }
+> EOF
+Success! Uploaded policy: internal-app
+/ $ vault write auth/kubernetes/role/internal-app \
+>         bound_service_account_names=internal-app \
+>         bound_service_account_namespaces=default \
+>         policies=internal-app \
+>         ttl=24h
+Success! Data written to: auth/kubernetes/role/internal-app
+
+####
+The role connects the Kubernetes service account, internal-app, and namespace, default, with the Vault policy, internal-app. The tokens returned after authentication are valid for 24 hours.
+
+Exit the vault-0 pod.
+####
+
+
+
+
+
+
+$ kubectl get serviceaccounts
+NAME                   SECRETS   AGE
+default                1         6m24s
+vault                  1         5m17s
+vault-agent-injector   1         5m17s
+$ cat service-account-internal-app.yml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: internal-app
+$ kubectl apply --filename service-account-internal-app.yml
+serviceaccount/internal-app created
+$ kubectl get serviceaccounts
+NAME                   SECRETS   AGE
+default                1         7m11s
+internal-app           1         5s
+vault                  1         6m4s
+vault-agent-injector   1         6m4s
+
+
+
+
