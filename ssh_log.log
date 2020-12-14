@@ -1,0 +1,17 @@
+(virtualenv) osboxes@osboxes:~/repos$ ll /home/osboxes/.ssh/known_hosts
+---------- 1 osboxes osboxes 1106 Dec 14 18:43 /home/osboxes/.ssh/known_hosts
+
+(virtualenv) osboxes@osboxes:~/repos$ GIT_SSH_COMMAND='ssh -o IdentitiesOnly=yes -i /home/osboxes/repos/idrsa_online -F /dev/null' git clone git@bitbucket.org:techcrat123/test.git
+Cloning into 'test'...
+The authenticity of host 'bitbucket.org (104.192.141.1)' can't be established.
+RSA key fingerprint is SHA256:zzXQOXSRBEiUtuE8AikJYKwbHaxvSc0ojez9YXaGp1A.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Failed to add the host to the list of known hosts (/home/osboxes/.ssh/known_hosts).   ## see it fails
+remote: Counting objects: 3, done.
+remote: Compressing objects: 100% (2/2), done.
+remote: Total 3 (delta 0), reused 0 (delta 0)
+Receiving objects: 100% (3/3), done.
+
+
+(virtualenv) osboxes@osboxes:~/repos$ ll /home/osboxes/.ssh/known_hosts
+---------- 1 osboxes osboxes 1106 Dec 14 18:43 /home/osboxes/.ssh/known_hosts
