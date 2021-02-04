@@ -6,7 +6,7 @@ https://github.com/openshift/openshift-extras/tree/master/misc/form_auth
 https://medium.com/@uri.tau/apache-and-ldap-cc7bff1f629d
 
 https://docs.okd.io/1.2/install_config/advanced_ldap_configuration/configuring_form_based_authentication.html
-
+https://www.server-world.info/en/note?os=Ubuntu_16.04&p=httpd&f=11
 
 
 (virtualenv) osboxes@osboxes:~/repos$ ll /home/osboxes/.ssh/known_hosts
