@@ -26,3 +26,47 @@ Receiving objects: 100% (3/3), done.
 
 (virtualenv) osboxes@osboxes:~/repos$ ll /home/osboxes/.ssh/known_hosts
 ---------- 1 osboxes osboxes 1106 Dec 14 18:43 /home/osboxes/.ssh/known_hosts
+
+#! /usr/bin/env python3
+import json
+import sys
+parent_struct = {
+   "apiVersion": "policy.open-cluster-management.io/v1",
+   "kind": "Policy",
+   "metadata": {
+      "name": "ldap-sync-policy",
+      "namespace": "default",
+      "annotations": {
+         "policy.open-cluster-management.io/categories": "CM Configuration Management",
+         "policy.open-cluster-management.io/controls": "CM-2 Baseline Configuration",
+         "policy.open-cluster-management.io/standards": "NIST SP 800-53"
+      }
+   },
+   "spec": {
+      "disabled": False,
+      "policy-template": [
+         {
+            "objectDefinition": {
+               "apiVersion": "policy.open-cluster-management.io/v1",
+               "kind": "ConfigurationPolicy",
+               "metadata": {
+                  "name": "ldap-sync-policy"
+               },
+               "spec": {
+                  "object-templates": []
+               }
+            }
+         }
+      ]
+   }
+}
+wrapper = {"complianceType": "musthave", "objectDefinition": {}}
+groups= json.loads(str(sys.stdin.read()) )
+for item in groups['items']:
+    item["kind"] = "Group"
+    item["apiVersion"] = "user.openshift.io/v1"
+    for remove_me in ["managedFields", "resourceVersion", "uid","creationTimestamp"]:
+        item['metadata'].pop(remove_me)
+    wrapper = {"complianceType": "musthave", "objectDefinition": item }
+    parent_struct['spec']['policy-template'][0]['objectDefinition']['spec']['object-templates'].append(wrapper)
+print(json.dumps(parent_struct))
